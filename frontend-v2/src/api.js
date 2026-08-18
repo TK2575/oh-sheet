@@ -29,22 +29,21 @@ function assertUnderSizeLimit(file) {
   }
 }
 
-async function postMultipart(url, file, responseKey) {
+async function postMultipart(url, file) {
   assertUnderSizeLimit(file);
   const form = new FormData();
   form.append("file", file);
   const response = await fetch(url, { method: "POST", body: form });
   if (!response.ok) throw await extractError(response);
-  const body = await response.json();
-  return body[responseKey];
+  return await response.json();
 }
 
 export async function uploadAudio(file) {
-  return postMultipart("/v1/uploads/audio", file, "audio");
+  return postMultipart("/v1/uploads/audio", file);
 }
 
 export async function uploadMidi(file) {
-  return postMultipart("/v1/uploads/midi", file, "midi");
+  return postMultipart("/v1/uploads/midi", file);
 }
 
 export async function createJob(payload) {

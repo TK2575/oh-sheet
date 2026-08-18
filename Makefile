@@ -20,7 +20,7 @@ PYTHON       ?= python3
 
 DART_DEFINE := $(if $(API_BASE_URL),--dart-define=API_BASE_URL=$(API_BASE_URL),)
 
-.PHONY: help install install-backend install-basic-pitch install-pop2piano install-demucs install-amt-apc install-eval install-frontend backend build rebuild frontend test test-backend test-e2e eval eval-refine lint typecheck clean require-flutter require-port-free require-base-image
+.PHONY: help install install-backend install-basic-pitch install-pop2piano install-demucs install-amt-apc install-eval install-frontend backend build rebuild frontend frontend-flutter test test-backend test-e2e eval eval-refine lint typecheck clean require-docker require-flutter require-port-free require-base-image
 
 help:
 	@echo "Oh Sheet — make targets"
@@ -39,8 +39,9 @@ help:
 	@echo "  make backend            docker compose up (Redis + Celery workers + API on :8000)"
 	@echo "                          requires 'make build' first"
 	@echo "  make rebuild            shortcut for: make build && make backend"
-	@echo "  make frontend           $(FLUTTER) run -d $(DEVICE) (override DEVICE=ios|android|macos|...)"
-	@echo "                          set API_BASE_URL=http://host:port to point at a non-default backend"
+	@echo "  make frontend           Start Node.js + Vite dev server in Docker (frontend-v2 on :5175)"
+	@echo "  make frontend-flutter   $(FLUTTER) run -d $(DEVICE) (Flutter; requires local SDK)"
+	@echo "                          override DEVICE=ios|android|macos|..."
 	@echo "                          set FLUTTER=/path/to/flutter if the SDK is not on your PATH"
 	@echo ""
 	@echo "  make test               run backend pytest suite"
@@ -53,6 +54,14 @@ help:
 # ---- install ----------------------------------------------------------------
 
 install: install-backend install-pop2piano install-basic-pitch install-frontend
+
+require-docker:
+	@if command -v docker >/dev/null 2>&1; then \
+		:; \
+	else \
+		echo "Docker not found. Please install Docker Desktop."; \
+		exit 127; \
+	fi
 
 require-flutter:
 	@if [ -x "$(FLUTTER)" ] || command -v "$(FLUTTER)" >/dev/null 2>&1; then \
@@ -141,7 +150,10 @@ require-base-image:
 		exit 1; \
 	fi
 
-frontend: require-flutter
+frontend: require-docker
+	docker compose up frontend
+
+frontend-flutter: require-flutter
 	cd $(FRONTEND) && $(FLUTTER) run -d $(DEVICE) $(DART_DEFINE)
 
 # ---- quality ----------------------------------------------------------------

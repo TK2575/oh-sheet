@@ -765,23 +765,32 @@ class PipelineRunner:
                     engrave_route = "remote_http"
                     if settings.engrave_backend == "local":
                         try:
+                            # Quantize score durations to avoid music21 export failures
+                            # on impossibly fine-grained note durations (e.g., 2048th notes)
+                            score_to_engrave = perf_obj.score
+                            for part in score_to_engrave.parts:
+                                for note in part.flatten().notesAndRests:
+                                    # Quantize to 64th notes
+                                    q_val = 64
+                                    note.quarterLength = round(note.quarterLength * q_val) / q_val
+
                             local_result = await asyncio.to_thread(
                                 engrave_local_module.engrave_score_locally,
-                                perf_obj.score,
+                                score_to_engrave,
                                 perf_obj.expression,
                                 title=resolved_title,
                                 composer=resolved_composer,
-                                render_pdf=True,
+                                render_pdf=False,
                             )
                             musicxml_bytes = local_result.musicxml_bytes
                             pdf_bytes = local_result.pdf_bytes
                             local_features = local_result.features
                             engrave_route = "local"
-                        except EngraveLocalError as exc:
+                        except (EngraveLocalError, Exception) as exc:
                             log.warning(
-                                "local engrave failed (%s) — falling through to remote HTTP "
+                                "local engrave failed (%s: %s) — falling through to remote HTTP "
                                 "for job_id=%s",
-                                exc, job_id,
+                                type(exc).__name__, exc, job_id,
                             )
                             musicxml_bytes = await engrave_midi_via_ml_service(midi_bytes)
                             engrave_route = "remote_http_fallback"

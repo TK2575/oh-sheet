@@ -46,29 +46,62 @@
 
 ## Quick Start
 
-**Requirements:** Python 3.10+, Flutter SDK, ffmpeg
+**Requirements:** Docker, Docker Compose (frontend-v2 now runs in Docker too!)
+
+### All-in-Docker Setup (Recommended)
 
 ```bash
-# Clone and install
+# Clone the repo
 git clone https://github.com/swifttarrow/oh-sheet.git
 cd oh-sheet
-make install                  # backend + frontend deps
 
-# Optional: install ML deps for real transcription
-make install-basic-pitch      # Spotify Basic Pitch (CPU, ~10s per song)
-
-# Build the shared dev base image (one-time; re-run when pyproject.toml,
-# shared/, or Dockerfile.dev changes).
+# Build the Python backend dev image (one-time; re-run when pyproject.toml,
+# shared/, or Dockerfile.dev changes)
 make build
 
-# Run
+# Terminal 1: Start backend services (Redis, API, Celery workers)
 make backend                  # API on http://localhost:8000
-make frontend                 # Flutter Web on Chrome
+
+# Terminal 2: Start frontend dev server (Vite + Node.js)
+make frontend                 # Frontend on http://localhost:5175
 ```
 
-Open the app, paste a YouTube URL, and hit **Let's go!**
+Open [localhost:5175](http://localhost:5175) in your browser, paste a YouTube URL, and hit **Let's go!**
 
-OpenAPI docs: [localhost:8000/docs](http://localhost:8000/docs)
+**APIs:**
+- App frontend: [localhost:5175](http://localhost:5175)
+- REST API docs: [localhost:8000/docs](http://localhost:8000/docs)
+
+### Local Python Development (without Docker backend)
+
+If you prefer local Python development:
+
+```bash
+# Create Python 3.12 venv (3.10+ supported, but 3.12 has best wheel coverage)
+python3.12 -m venv venv
+source venv/bin/activate
+
+# Install backend only (no ML, uses 4-note transcription stub)
+make install-backend
+
+# Optional: install ML transcription (requires more build deps)
+make install-basic-pitch
+
+# Run backend locally
+python -m uvicorn backend.main:app --reload
+```
+
+Then in another terminal: `make frontend` (will start Vite in Docker).
+
+### Flutter Development (Legacy)
+
+For the legacy Flutter frontend:
+
+```bash
+make frontend-flutter        # Requires Flutter SDK installed locally
+```
+
+**Note:** The modern frontend (frontend-v2) using Node.js + Vite is the recommended approach. Full ML stack dependencies (`pop2piano`, `demucs`, `llvmlite`) work best in Docker.
 
 ## Engraver service
 

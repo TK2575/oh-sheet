@@ -605,6 +605,17 @@ def _stream_to_musicxml_bytes(sc) -> bytes:
             "music21.musicxml exporter not available — music21 install is broken."
         ) from exc
 
+    # Quantize durations to avoid "too short" export errors from music21.
+    # Round all note durations to the nearest 64th note (1/64 quarter note).
+    try:
+        for part in sc.parts:
+            for note in part.flatten().notesAndRests:
+                # Quantize to 64th notes: multiply by 64, round, divide by 64
+                q_val = 64
+                note.quarterLength = round(note.quarterLength * q_val) / q_val
+    except Exception:
+        pass  # If quantization fails, try export anyway
+
     try:
         exporter = GeneralObjectExporter(sc)
         out = exporter.parse()

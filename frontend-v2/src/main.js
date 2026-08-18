@@ -96,15 +96,16 @@ const handlers = {
       // Upload step for audio/midi before creating the job
       if (formData.source === "audio") {
         const ref = await api.uploadAudio(formData.file);
-        jobPayload = { audio: ref, title: formData.title, artist: formData.artist };
+        jobPayload = { audio: ref, title: formData.title, artist: formData.artist, skip_humanizer: true };
       } else if (formData.source === "midi") {
         const ref = await api.uploadMidi(formData.file);
-        jobPayload = { midi: ref, title: formData.title, artist: formData.artist };
+        jobPayload = { midi: ref, title: formData.title, artist: formData.artist, skip_humanizer: true };
       } else if (formData.source === "youtube") {
         jobPayload = {
           title: formData.url,
           artist: formData.artist,
           prefer_clean_source: true,
+          skip_humanizer: true,
         };
       }
 

@@ -133,3 +133,14 @@ services:
 
   # worker-engrave retired: engrave runs inline in the orchestrator as an
   # HTTP call to oh-sheet-ml-pipeline (OHSHEET_ENGRAVER_SERVICE_URL).
+
+  frontend:
+    image: node:20-slim
+    working_dir: /app/frontend-v2
+    command: sh -c "npm ci && npm run dev"
+    ports:
+      - "5175:5175"
+    volumes:
+      - ./frontend-v2:/app/frontend-v2
+    depends_on:
+      - orchestrator

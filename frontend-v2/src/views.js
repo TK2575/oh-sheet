@@ -37,16 +37,12 @@ function isYoutubeVideoUrl(s) {
   return typeof s === "string" && YOUTUBE_VIDEO_RE.test(s.trim());
 }
 
-// Demo-day scope (Apr 20): YouTube is the only source routed through
-// TuneChat for transcription. Audio + MIDI uploads still exist in the
-// backend but aren't plumbed through the TuneChat fast-path yet, and
-// we don't want the landing page advertising options we can't run on
-// stage. The segmented picker auto-hides when SOURCES has <= 1 entry
-// (see `segmented()`), so reducing to a single entry is enough to
-// kill the picker entirely without touching CSS or the branch logic
-// in `idleBody()`. Re-adding audio/midi later is a 2-line restore.
+// Audio + MIDI uploads are supported by the backend and frontend.
+// Toggle these on/off to enable the segmented picker.
 const SOURCES = [
   { key: "youtube", label: "YouTube" },
+  { key: "audio", label: "Audio" },
+  { key: "midi", label: "MIDI" },
 ];
 
 const STAGES = [
