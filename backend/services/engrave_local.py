@@ -197,6 +197,8 @@ def score_to_musicxml(
     Raises ``EngraveLocalError`` when music21 isn't importable or when
     the produced XML is empty / not well-formed.
     """
+    log.info("engrave_local: score_to_musicxml called with %d RH notes, %d LH notes",
+             len(score.right_hand), len(score.left_hand))
     try:
         # noqa block: lazy-imported optional dep; ruff's import sorter
         # wants to split this by alias into separate ``from`` blocks,
@@ -306,11 +308,15 @@ def score_to_musicxml(
     # ── NOW measureize: pulls everything above into measure containers ─
     for part in (rh_part, lh_part):
         try:
+            log.info("engrave_local: calling makeMeasures on %s...", part.id)
             part.makeMeasures(inPlace=True)
+            log.info("engrave_local: makeMeasures succeeded, calling makeTies...")
             part.makeTies(inPlace=True)
+            log.info("engrave_local: makeTies succeeded on %s", part.id)
         except Exception as exc:  # noqa: BLE001
             log.warning("engrave_local: makeMeasures/makeTies on %s failed: %s",
                         part.id, exc)
+            raise
 
     # ── Pedal + articulations attach AFTER measureization ─────────────
     # Both walk the part's notes (now inside Voices inside Measures) to
@@ -330,8 +336,10 @@ def score_to_musicxml(
     # ── Quantize durations AFTER measureization (before export) ────────
     # music21 may create fractional durations during makeMeasures/makeTies.
     # Quantize them now to 1/64 notes so export doesn't reject them.
+    log.info("engrave_local: calling post-measureization quantization...")
     _quantize_after_measureization(rh_part)
     _quantize_after_measureization(lh_part)
+    log.info("engrave_local: post-measureization quantization complete")
 
     # ── Compose the score and group as a piano staff ──────────────────
     sc.insert(0, rh_part)
@@ -386,20 +394,27 @@ def _quantize_after_measureization(part) -> None:
 	min_duration = 1.0 / 64
 	clamped = 0
 	quantized_count = 0
-	for note in part.flatten().notesAndRests:
-		original = note.quarterLength
+	all_durations = []
+
+	for n in part.flatten().notesAndRests:
+		original = n.quarterLength
+		all_durations.append(original)
+
 		if original < min_duration:
-			note.quarterLength = min_duration
+			n.quarterLength = min_duration
 			clamped += 1
 		else:
 			q = round(original * 64) / 64
 			if abs(q - original) > 1e-9:
-				note.quarterLength = q
+				n.quarterLength = q
 				quantized_count += 1
-	if clamped > 0 or quantized_count > 0:
+
+	if all_durations:
+		min_d = min(all_durations)
+		max_d = max(all_durations)
 		log.info(
-			"engrave_local: post-measureization quantized %s: clamped=%d quantized=%d",
-			part.id, clamped, quantized_count,
+			"engrave_local: post-measureization %s: %d notes (min=%g max=%g) clamped=%d quantized=%d",
+			part.id, len(all_durations), min_d, max_d, clamped, quantized_count,
 		)
 
 
@@ -710,6 +725,29 @@ def _stream_to_musicxml_bytes(sc) -> bytes:
             )
     except Exception as exc:  # noqa: BLE001
         log.warning("engrave_local: safety quantization attempt failed (ignoring): %s", exc)
+
+    # Log actual durations before export
+    try:
+        all_durations = []
+        for part in sc.parts:
+            for note in part.flatten().notesAndRests:
+                all_durations.append(note.quarterLength)
+        if all_durations:
+            min_dur = min(all_durations)
+            max_dur = max(all_durations)
+            log.info(
+                "engrave_local: before export - %d durations, min=%g max=%g",
+                len(all_durations), min_dur, max_dur,
+            )
+            # Check for any that are still extremely small
+            extreme = [d for d in all_durations if d < 0.001]
+            if extreme:
+                log.warning(
+                    "engrave_local: found %d extreme durations before export: %s",
+                    len(extreme), extreme[:5],
+                )
+    except Exception as e:
+        log.warning("engrave_local: failed to log durations: %s", e)
 
     try:
         exporter = GeneralObjectExporter(sc)
