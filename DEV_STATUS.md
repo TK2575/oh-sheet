@@ -36,27 +36,43 @@ The arrangement stage creates notes with impossibly fine-grained durations (2048
 - Added segmented picker for YouTube/Audio/MIDI input modes
 - Fixed Vite config for Docker networking
 
-## Next Steps
+## Quantization Fix Attempt (Session 2026-08-19)
 
-### Option 1: Find/Use Remote Engraver (Recommended for Quick Win)
-- Research free public MusicXML engraver services or open-source alternatives
-- Point `OHSHEET_ENGRAVER_SERVICE_URL` env var to the service
-- Would allow end-to-end testing with real output
+### Root Cause Identified
+The arrange stage generates notes with impossibly fine-grained durations (2048th notes ≈ 0.00048828 quarter notes) that music21 cannot export to MusicXML. The error chain:
+1. Arrange creates notes with extreme durations
+2. `makeMeasures()` / `makeTies()` may further subdivide these
+3. music21 export rejects: `Cannot convert "2048th" duration to MusicXML (too short)`
 
-### Option 2: Fix the Quantization Approach
-- Current quantization to 64th notes didn't work; may need different granularity
-- Could apply quantization earlier (in arrange stage rather than engrave stage)
-- Need to investigate if quantization is actually being called or if music21 validates before it runs
+### Fixes Implemented (Multiple Layers)
+1. **Pre-build quantization** (`_quantize_durations_before_build`)
+   - Quantizes ScoreNote durations to 1/64 quarter notes BEFORE building music21 score
+   - Clamps extremes to 1/64 minimum
 
-### Option 3: Skip Engraving Entirely
-- Return minimal MusicXML stub + valid MIDI 
-- Fast path to functional pipeline for testing
-- Users get MIDI output and can inspect MusicXML structure
+2. **Post-measureization quantization** (`_quantize_after_measureization`)
+   - Runs after `makeMeasures()`/`makeTies()` to catch any durations music21 creates
+   - Modifies music21 note objects directly
 
-### Option 4: Fix the Arrange Stage
-- Modify how arrangement generates note durations to avoid sub-64th-note precision
-- Most fundamental fix but requires understanding the arrangement algorithm
-- Likely involves changes to `backend/services/arrange.py`
+3. **Safety quantization in MusicXML export** (`_stream_to_musicxml_bytes`)
+   - Final fallback to clamp any remaining problematic durations
+   - Improved error handling and logging
+
+### Status
+- ✅ Unit tests pass (quantization logic works in isolation)
+- ❌ End-to-end pipeline still fails with 2048th error
+- **Issue**: music21 may be caching or preserving duration representations that bypass our quantization
+
+### Files Changed
+- `backend/services/engrave_local.py` — added 3 quantization layers + logging
+- `backend/jobs/runner.py` — removed broken quantization code
+- `backend/test_quantization.py` — unit test validating quantization logic
+- `DEV_STATUS.md` — this file
+
+### Next Steps (If Continuing)
+1. **Investigate music21 internals** — determine where "2048th" representation comes from
+2. **Quantize in arrange stage** — fix duration calculation before notes reach engrave
+3. **Alternative approach** — use MIDI-only output path instead of MusicXML export
+4. **Use remote engraver** — configure external MusicXML service if available
 
 ## Testing
 

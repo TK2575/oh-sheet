@@ -768,12 +768,7 @@ class PipelineRunner:
                             # Quantize score durations to avoid music21 export failures
                             # on impossibly fine-grained note durations (e.g., 2048th notes)
                             score_to_engrave = perf_obj.score
-                            for part in score_to_engrave.parts:
-                                for note in part.flatten().notesAndRests:
-                                    # Quantize to 64th notes
-                                    q_val = 64
-                                    note.quarterLength = round(note.quarterLength * q_val) / q_val
-
+                            # Quantization now happens in engrave_score_locally()
                             local_result = await asyncio.to_thread(
                                 engrave_local_module.engrave_score_locally,
                                 score_to_engrave,

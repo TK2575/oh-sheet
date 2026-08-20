@@ -246,6 +246,13 @@ def score_to_musicxml(
         "stream": stream,
     }
 
+    # ── Quantize note durations BEFORE building parts ────────────────────
+    # Clamp extreme durations (2048th notes, etc.) to representable values
+    # (64th notes = 1/64 quarter note = 0.015625). This must happen before
+    # _build_part_flat so makeMeasures() sees quantized durations.
+    quantized_rh = _quantize_durations_before_build(score.right_hand)
+    quantized_lh = _quantize_durations_before_build(score.left_hand)
+
     # ── Build each staff FLAT (notes in voices, no measures yet) ──────
     # We delay makeMeasures until every part-level element (tempo, chord
     # symbols, dynamics) has been inserted at its absolute beat offset.
@@ -254,11 +261,11 @@ def score_to_musicxml(
     # dangles outside the measures and is silently dropped by the
     # MusicXML exporter.
     rh_part, rh_voice_ids = _build_part_flat(
-        score.right_hand, meta, hand="rh",
+        quantized_rh, meta, hand="rh",
         m21_clef=clef.TrebleClef(), m21_modules=m21_modules, features=features,
     )
     lh_part, lh_voice_ids = _build_part_flat(
-        score.left_hand, meta, hand="lh",
+        quantized_lh, meta, hand="lh",
         m21_clef=clef.BassClef(), m21_modules=m21_modules, features=features,
     )
     features.voice_count = len(rh_voice_ids | lh_voice_ids)
@@ -320,6 +327,12 @@ def score_to_musicxml(
             m21_artic=m21_artic, m21_expr=m21_expr, features=features,
         )
 
+    # ── Quantize durations AFTER measureization (before export) ────────
+    # music21 may create fractional durations during makeMeasures/makeTies.
+    # Quantize them now to 1/64 notes so export doesn't reject them.
+    _quantize_after_measureization(rh_part)
+    _quantize_after_measureization(lh_part)
+
     # ── Compose the score and group as a piano staff ──────────────────
     sc.insert(0, rh_part)
     sc.insert(0, lh_part)
@@ -362,6 +375,64 @@ def score_to_musicxml(
 
 
 # ── Internal builders ──────────────────────────────────────────────────
+
+
+def _quantize_after_measureization(part) -> None:
+	"""Quantize all note durations in a music21 Part to 1/64 notes.
+
+	Applied AFTER makeMeasures() and makeTies() so music21's export doesn't
+	reject extreme durations. This modifies notes in-place.
+	"""
+	min_duration = 1.0 / 64
+	clamped = 0
+	quantized_count = 0
+	for note in part.flatten().notesAndRests:
+		original = note.quarterLength
+		if original < min_duration:
+			note.quarterLength = min_duration
+			clamped += 1
+		else:
+			q = round(original * 64) / 64
+			if abs(q - original) > 1e-9:
+				note.quarterLength = q
+				quantized_count += 1
+	if clamped > 0 or quantized_count > 0:
+		log.info(
+			"engrave_local: post-measureization quantized %s: clamped=%d quantized=%d",
+			part.id, clamped, quantized_count,
+		)
+
+
+def _quantize_durations_before_build(notes: list[ScoreNote]) -> list[ScoreNote]:
+	"""Quantize note durations to 64th notes before building the music21 score.
+
+	This prevents music21 export from rejecting extreme durations (2048th notes,
+	etc.) that arise from fine-grained duration calculations in the arrange stage.
+	Quantization to 64th notes (1/64 quarter note = 0.015625) is the coarsest
+	granularity that preserves most rhythmic detail while staying within
+	music21's export limits.
+	"""
+	result = []
+	min_duration = 1.0 / 64  # Minimum acceptable duration (1/64 quarter note)
+	extreme_count = 0
+	for n in notes:
+		# If duration is already acceptable, keep it as-is
+		if n.duration_beat >= min_duration:
+			# Quantize to nearest 1/64
+			quantized_duration = round(n.duration_beat * 64) / 64
+		else:
+			# Duration too small; clamp to minimum
+			quantized_duration = min_duration
+			extreme_count += 1
+		# Create a copy with quantized duration using Pydantic's model_copy
+		n_copy = n.model_copy(update={"duration_beat": quantized_duration})
+		result.append(n_copy)
+	if extreme_count > 0:
+		log.info(
+			"engrave_local: pre-quantization clamped %d extreme durations to 1/64 note",
+			extreme_count,
+		)
+	return result
 
 
 def _build_part_flat(
@@ -440,9 +511,14 @@ def _build_part_flat(
         for voice_id in sorted(by_voice.keys()):
             v = stream.Voice(id=str(voice_id))
             for n in sorted(by_voice[voice_id], key=lambda x: x.onset_beat):
-                # quarterLength must be > 0; floor at 1/64 note to avoid
-                # music21 silently dropping ultra-short notes.
-                qlen = max(1.0 / 16.0, float(n.duration_beat))
+                # Duration already quantized to 1/64 notes by _quantize_durations_before_build.
+                # Just use it directly; music21 will accept any quarterLength > 0.
+                qlen = float(n.duration_beat)
+                if qlen < 1.0 / 64:
+                    log.warning(
+                        "engrave_local: note %s still has extreme duration %f (1/64=%f)",
+                        n.id, qlen, 1.0 / 64
+                    )
                 note_obj = m21_note.Note(int(n.pitch), quarterLength=qlen)
                 # MIDI velocity 1..127. music21 coerces 0 → "no volume",
                 # which becomes a silent note in MIDI playback — clamp.
@@ -605,16 +681,35 @@ def _stream_to_musicxml_bytes(sc) -> bytes:
             "music21.musicxml exporter not available — music21 install is broken."
         ) from exc
 
-    # Quantize durations to avoid "too short" export errors from music21.
-    # Round all note durations to the nearest 64th note (1/64 quarter note).
+    # Final safety check: quantize any remaining durations that slipped through.
+    # This shouldn't be necessary if _quantize_durations_before_build worked,
+    # but it's a failsafe in case music21 created fractional durations during
+    # makeMeasures() or makeTies().
     try:
+        quantized_count = 0
+        extreme_count = 0
+        min_duration = 1.0 / 64
         for part in sc.parts:
             for note in part.flatten().notesAndRests:
-                # Quantize to 64th notes: multiply by 64, round, divide by 64
-                q_val = 64
-                note.quarterLength = round(note.quarterLength * q_val) / q_val
-    except Exception:
-        pass  # If quantization fails, try export anyway
+                original = note.quarterLength
+                # If duration is too small, clamp to minimum; otherwise quantize to nearest 1/64
+                if original < min_duration:
+                    note.quarterLength = min_duration
+                    extreme_count += 1
+                    quantized_count += 1
+                else:
+                    quantized = round(original * 64) / 64
+                    if abs(quantized - original) > 1e-9:  # Only if changed
+                        note.quarterLength = quantized
+                        quantized_count += 1
+        if quantized_count > 0:
+            log.info(
+                "engrave_local: safety quantization applied to %d notes "
+                "(%d clamped to minimum, rest quantized to grid)",
+                quantized_count, extreme_count,
+            )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("engrave_local: safety quantization attempt failed (ignoring): %s", exc)
 
     try:
         exporter = GeneralObjectExporter(sc)
