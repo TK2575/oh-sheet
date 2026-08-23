@@ -248,6 +248,16 @@ def score_to_musicxml(
         "stream": stream,
     }
 
+    # ── Check raw input durations from arrange stage ──────────────────────
+    rh_durations = [n.duration_beat for n in score.right_hand]
+    lh_durations = [n.duration_beat for n in score.left_hand]
+    if rh_durations:
+        log.info("engrave_local: RH input durations min=%g max=%g (from arrange)",
+                 min(rh_durations), max(rh_durations))
+    if lh_durations:
+        log.info("engrave_local: LH input durations min=%g max=%g (from arrange)",
+                 min(lh_durations), max(lh_durations))
+
     # ── Quantize note durations BEFORE building parts ────────────────────
     # Clamp extreme durations (2048th notes, etc.) to representable values
     # (64th notes = 1/64 quarter note = 0.015625). This must happen before
@@ -971,6 +981,7 @@ def engrave_score_locally(
     something even when the renderer subprocess is broken. Hard MusicXML
     failures still raise.
     """
+    log.info("engrave_local: engrave_score_locally called")
     xml_bytes, features = score_to_musicxml(
         score, expression, title=title, composer=composer,
     )
