@@ -48,6 +48,16 @@ log = logging.getLogger(__name__)
 
 EventCallback = Callable[[JobEvent], None]
 
+# Minimal-but-valid MusicXML used when neither engrave backend can produce
+# real notation (e.g. local music21 export rejects extreme durations and
+# the remote ML engraver is unreachable). The rendered MIDI is already
+# valid at this point — see the ``engrave`` stage below — so we degrade to
+# a MIDI-only result rather than failing the whole job.
+_STUB_MUSICXML_BYTES = (
+    b'<?xml version="1.0" encoding="UTF-8"?>\n'
+    b'<score-partwise version="3.1"><part id="P1"/></score-partwise>'
+)
+
 # Maps execution plan step names to Celery task names. The engrave stage
 # is NOT in this map — it's handled inline via the ml_engraver HTTP client
 # rather than dispatched as a Celery task.
@@ -787,10 +797,33 @@ class PipelineRunner:
                                 "for job_id=%s",
                                 type(exc).__name__, exc, job_id,
                             )
-                            musicxml_bytes = await engrave_midi_via_ml_service(midi_bytes)
-                            engrave_route = "remote_http_fallback"
+                            try:
+                                musicxml_bytes = await engrave_midi_via_ml_service(midi_bytes)
+                                engrave_route = "remote_http_fallback"
+                            except Exception as remote_exc:  # noqa: BLE001
+                                # Neither engrave backend could produce notation.
+                                # ``midi_bytes`` was already rendered above and
+                                # is valid regardless — degrade to a MIDI-only
+                                # result (stub MusicXML) instead of failing the
+                                # whole job. See DEV_STATUS.md "MIDI-Only Output".
+                                log.warning(
+                                    "remote engrave also failed (%s: %s) — "
+                                    "returning MIDI-only result for job_id=%s",
+                                    type(remote_exc).__name__, remote_exc, job_id,
+                                )
+                                musicxml_bytes = _STUB_MUSICXML_BYTES
+                                engrave_route = "midi_only_stub"
                     else:
-                        musicxml_bytes = await engrave_midi_via_ml_service(midi_bytes)
+                        try:
+                            musicxml_bytes = await engrave_midi_via_ml_service(midi_bytes)
+                        except Exception as remote_exc:  # noqa: BLE001
+                            log.warning(
+                                "remote engrave failed (%s: %s) — returning "
+                                "MIDI-only result for job_id=%s",
+                                type(remote_exc).__name__, remote_exc, job_id,
+                            )
+                            musicxml_bytes = _STUB_MUSICXML_BYTES
+                            engrave_route = "midi_only_stub"
 
                     prefix = f"jobs/{job_id}/output"
                     musicxml_uri = self.blob_store.put_bytes(
