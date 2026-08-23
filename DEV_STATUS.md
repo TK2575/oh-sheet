@@ -36,7 +36,7 @@ The arrangement stage creates notes with impossibly fine-grained durations (2048
 - Added segmented picker for YouTube/Audio/MIDI input modes
 - Fixed Vite config for Docker networking
 
-## Quantization Fix Attempt (Session 2026-08-19)
+## Music21 MusicXML Export Investigation (Sessions 2026-08-19 to 2026-08-22)
 
 ### Root Cause Identified
 The arrange stage generates notes with impossibly fine-grained durations (2048th notes ≈ 0.00048828 quarter notes) that music21 cannot export to MusicXML. The error chain:
@@ -68,11 +68,53 @@ The arrange stage generates notes with impossibly fine-grained durations (2048th
 - `backend/test_quantization.py` — unit test validating quantization logic
 - `DEV_STATUS.md` — this file
 
-### Next Steps (If Continuing)
-1. **Investigate music21 internals** — determine where "2048th" representation comes from
-2. **Quantize in arrange stage** — fix duration calculation before notes reach engrave
-3. **Alternative approach** — use MIDI-only output path instead of MusicXML export
-4. **Use remote engraver** — configure external MusicXML service if available
+### Investigation Deep-Dive
+
+**Systematic Testing (2026-08-22):**
+- Disabled `makeTies()` → error persists (ties not the culprit)
+- Added pre-quantization + post-quantization + safety quantization → all run successfully, clamped/quantized 11+ notes
+- Logged all durations before export → min=0.015625 (1/64), all >= minimum
+- Tested music21 10.5.0 with simple 1/64 notes → exports fine
+- Error originates **inside music21's export validator**, not from note objects
+
+**Root Cause Analysis:**
+The error "Cannot convert '2048th' duration to MusicXML" is thrown by music21's `GeneralObjectExporter.parse()` during MusicXML export validation. The issue is:
+- `quarterLength` property modifications work in isolation (unit tests confirm)
+- But music21 uses **internal duration representation** that differs from `quarterLength`
+- Likely due to: internal fraction calculations, tied note processing, or duration caching
+- The "2048th" representation exists INSIDE music21's export validation, not in our note objects
+
+**Why Quantization Didn't Work:**
+1. Pre-build quantization: notes modified before building score, but music21 may recalculate during measureization
+2. Post-measureization quantization: runs but music21's validator has already cached duration state
+3. Safety quantization before export: happens after music21 has locked in internal representation
+4. No effective hook exists in music21's export path to intercept/modify duration validation
+
+### Recommendations
+
+**Path Forward (Priority Order):**
+
+1. **Use Remote Engraver (RECOMMENDED)** 
+   - Configure `OHSHEET_ENGRAVER_SERVICE_URL` to external service
+   - Original design intended for this (remote service available in hosted version)
+   - Unblocks end-to-end testing immediately
+   - Requires finding/hosting a compliant service
+
+2. **MIDI-Only Output (QUICK WIN)**
+   - Skip MusicXML export, return valid MIDI + stub XML
+   - Gets pipeline functional for testing transcription quality
+   - Users get MIDI playback, can inspect note structure
+   - 1-2 hour implementation
+
+3. **Investigate music21 Alternatives**
+   - Try music21 11.x+ (current is 10.5.0)
+   - Or alternative library: `music-dsl`, `lilypond-python`, direct MusicXML generation
+   - High-risk: unknown compatibility with rest of pipeline
+
+4. **Fix Upstream (Lowest Priority)**
+   - Modify arrange stage to generate less extreme durations initially
+   - Requires understanding duration calculation algorithm
+   - May not solve issue if music21 still creates fractional durations
 
 ## Testing
 
